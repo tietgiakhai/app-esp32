@@ -5,14 +5,53 @@ import { lookupDTC } from './dtcDatabase';
 export class ObdProtocol {
   public static cachedVehicleInfo: VehicleInfo | null = null;
   private static lastLiveData: SensorData = {
-    rpm: 0,
+    // 1. Động cơ & Vận hành
+    rpm: 850,
     speed: 0,
-    coolantTemp: 85,
-    throttle: 0,
-    engineLoad: 0,
-    intakeTemp: 32,
-    fuelLevel: 65,
-    voltage: 13.8,
+    engineLoad: 44.7,
+    absLoad: 42.4,
+    timingAdvance: 11.0,
+    runTime: 442,
+
+    // 2. Khí nạp & Nhiên liệu
+    coolantTemp: 86,
+    intakeTemp: 46,
+    mapKpa: 43,
+    baroPressure: 99,
+    ambientTemp: 45,
+    fuelLevel: 68,
+    fuelSystemStatus: 'CL',
+    stftB1: -0.78,
+    ltftB1: 0.0,
+    lambdaCmd: 1.000,
+    evapPurge: 13.7,
+    fuelType: 'Xăng (GAS)',
+
+    // 3. Bướm ga & Chân ga
+    throttle: 14.5,
+    throttleB: 15.3,
+    relThrottle: 7.1,
+    cmdThrottle: 7.1,
+    pedalD: 18.8,
+    pedalE: 9.4,
+    pedalRel: 0.0,
+
+    // 4. Khí xả & Cảm biến Oxy
+    o2s1Volt: 0.10,
+    o2s1Trim: -0.78,
+    o2s2Volt: 0.82,
+    o2s2Trim: -0.78,
+    o2Locations: 'B1: S1, S2',
+    obdType: 'EOBD',
+
+    // 5. Điện áp & Giám sát lỗi
+    voltage: 13.55,
+    milOn: false,
+    dtcCount: 0,
+    warmupsSinceClear: 1,
+    distanceSinceClear: 0,
+    milDistance: 0,
+
     timestamp: Date.now()
   };
   private static pollCycle = 0;
@@ -370,43 +409,142 @@ export class ObdProtocol {
         bleService.setVehicleLinked(true);
       }
 
-      // 3. Luân phiên truy vấn các cảm biến phụ (Round-robin để giảm tải Bus CAN)
-      this.pollCycle = (this.pollCycle + 1) % 4;
+      // 3. Luân phiên truy vấn các cảm biến phụ theo danh sách 37 PIDs Xpander
+      this.pollCycle = (this.pollCycle + 1) % 8;
 
       if (this.pollCycle === 0) {
-        // Nhiệt độ nước làm mát (PID 05)
-        const cltResp = await bleService.sendCommand('0105', 400);
-        const cltBytes = this.extractDataBytes(cltResp, '05');
-        if (cltBytes.length >= 1) {
-          data.coolantTemp = cltBytes[0] - 40;
-        }
-      } else if (this.pollCycle === 1) {
-        // Vị trí bướm ga Throttle (PID 11)
-        const thrResp = await bleService.sendCommand('0111', 400);
-        const thrBytes = this.extractDataBytes(thrResp, '11');
-        if (thrBytes.length >= 1) {
-          data.throttle = Math.round((thrBytes[0] * 100) / 255);
-        }
-      } else if (this.pollCycle === 2) {
-        // Tải động cơ Engine Load (PID 04)
-        const lodResp = await bleService.sendCommand('0104', 400);
+        // Tải động cơ (04), Nhiệt độ nước (05), Bướm ga (11)
+        const lodResp = await bleService.sendCommand('0104', 350);
         const lodBytes = this.extractDataBytes(lodResp, '04');
-        if (lodBytes.length >= 1) {
-          data.engineLoad = Math.round((lodBytes[0] * 100) / 255);
-        }
-      } else if (this.pollCycle === 3) {
-        // Nhiệt độ khí nạp Intake Temp (PID 0F) & Mức xăng (PID 2F)
-        const iatResp = await bleService.sendCommand('010F', 400);
+        if (lodBytes.length >= 1) data.engineLoad = Math.round((lodBytes[0] * 100) / 255);
+
+        const cltResp = await bleService.sendCommand('0105', 350);
+        const cltBytes = this.extractDataBytes(cltResp, '05');
+        if (cltBytes.length >= 1) data.coolantTemp = cltBytes[0] - 40;
+
+        const thrResp = await bleService.sendCommand('0111', 350);
+        const thrBytes = this.extractDataBytes(thrResp, '11');
+        if (thrBytes.length >= 1) data.throttle = Math.round((thrBytes[0] * 100) / 255);
+      } else if (this.pollCycle === 1) {
+        // Áp suất nạp MAP (0B), Góc đánh lửa (0E), Nhiệt độ nạp IAT (0F)
+        const mapResp = await bleService.sendCommand('010B', 350);
+        const mapBytes = this.extractDataBytes(mapResp, '0B');
+        if (mapBytes.length >= 1) data.mapKpa = mapBytes[0];
+
+        const timResp = await bleService.sendCommand('010E', 350);
+        const timBytes = this.extractDataBytes(timResp, '0E');
+        if (timBytes.length >= 1) data.timingAdvance = parseFloat(((timBytes[0] / 2) - 64).toFixed(1));
+
+        const iatResp = await bleService.sendCommand('010F', 350);
         const iatBytes = this.extractDataBytes(iatResp, '0F');
-        if (iatBytes.length >= 1) {
-          data.intakeTemp = iatBytes[0] - 40;
+        if (iatBytes.length >= 1) data.intakeTemp = iatBytes[0] - 40;
+      } else if (this.pollCycle === 2) {
+        // Trim ngắn hạn (06), Trim dài hạn (07), Hòa khí Lambda (44)
+        const stftResp = await bleService.sendCommand('0106', 350);
+        const stftBytes = this.extractDataBytes(stftResp, '06');
+        if (stftBytes.length >= 1) data.stftB1 = parseFloat(((stftBytes[0] / 1.28) - 100).toFixed(2));
+
+        const ltftResp = await bleService.sendCommand('0107', 350);
+        const ltftBytes = this.extractDataBytes(ltftResp, '07');
+        if (ltftBytes.length >= 1) data.ltftB1 = parseFloat(((ltftBytes[0] / 1.28) - 100).toFixed(2));
+
+        const lamResp = await bleService.sendCommand('0144', 350);
+        const lamBytes = this.extractDataBytes(lamResp, '44');
+        if (lamBytes.length >= 2) data.lambdaCmd = parseFloat((((lamBytes[0] * 256) + lamBytes[1]) / 32768).toFixed(3));
+      } else if (this.pollCycle === 3) {
+        // Cảm biến Oxy S1 (14), Oxy S2 (15), Điện áp ECU (42)
+        const o21Resp = await bleService.sendCommand('0114', 350);
+        const o21Bytes = this.extractDataBytes(o21Resp, '14');
+        if (o21Bytes.length >= 2) {
+          data.o2s1Volt = parseFloat((o21Bytes[0] / 200).toFixed(2));
+          data.o2s1Trim = parseFloat(((o21Bytes[1] / 1.28) - 100).toFixed(2));
         }
 
-        const fulResp = await bleService.sendCommand('012F', 400);
-        const fulBytes = this.extractDataBytes(fulResp, '2F');
-        if (fulBytes.length >= 1) {
-          data.fuelLevel = Math.round((fulBytes[0] * 100) / 255);
+        const o22Resp = await bleService.sendCommand('0115', 350);
+        const o22Bytes = this.extractDataBytes(o22Resp, '15');
+        if (o22Bytes.length >= 2) {
+          data.o2s2Volt = parseFloat((o22Bytes[0] / 200).toFixed(2));
+          data.o2s2Trim = parseFloat(((o22Bytes[1] / 1.28) - 100).toFixed(2));
         }
+
+        const voltResp = await bleService.sendCommand('0142', 350);
+        const voltBytes = this.extractDataBytes(voltResp, '42');
+        if (voltBytes.length >= 2) {
+          data.voltage = parseFloat((((voltBytes[0] * 256) + voltBytes[1]) / 1000).toFixed(2));
+        }
+      } else if (this.pollCycle === 4) {
+        // Tải tuyệt đối (43), Bướm ga tương đối (45), Bướm ga B (47), Điều khiển bướm ga (4C)
+        const absResp = await bleService.sendCommand('0143', 350);
+        const absBytes = this.extractDataBytes(absResp, '43');
+        if (absBytes.length >= 2) data.absLoad = parseFloat(((((absBytes[0] * 256) + absBytes[1]) * 100) / 255).toFixed(1));
+
+        const relResp = await bleService.sendCommand('0145', 350);
+        const relBytes = this.extractDataBytes(relResp, '45');
+        if (relBytes.length >= 1) data.relThrottle = parseFloat(((relBytes[0] * 100) / 255).toFixed(1));
+
+        const tbResp = await bleService.sendCommand('0147', 350);
+        const tbBytes = this.extractDataBytes(tbResp, '47');
+        if (tbBytes.length >= 1) data.throttleB = parseFloat(((tbBytes[0] * 100) / 255).toFixed(1));
+
+        const cmdtResp = await bleService.sendCommand('014C', 350);
+        const cmdtBytes = this.extractDataBytes(cmdtResp, '4C');
+        if (cmdtBytes.length >= 1) data.cmdThrottle = parseFloat(((cmdtBytes[0] * 100) / 255).toFixed(1));
+      } else if (this.pollCycle === 5) {
+        // Chân ga APP D (49), APP E (4A), Chân ga tương đối (5A)
+        const pdResp = await bleService.sendCommand('0149', 350);
+        const pdBytes = this.extractDataBytes(pdResp, '49');
+        if (pdBytes.length >= 1) data.pedalD = parseFloat(((pdBytes[0] * 100) / 255).toFixed(1));
+
+        const peResp = await bleService.sendCommand('014A', 350);
+        const peBytes = this.extractDataBytes(peResp, '4A');
+        if (peBytes.length >= 1) data.pedalE = parseFloat(((peBytes[0] * 100) / 255).toFixed(1));
+
+        const prelResp = await bleService.sendCommand('015A', 350);
+        const prelBytes = this.extractDataBytes(prelResp, '5A');
+        if (prelBytes.length >= 1) data.pedalRel = parseFloat(((prelBytes[0] * 100) / 255).toFixed(1));
+      } else if (this.pollCycle === 6) {
+        // Áp suất khí quyển (33), Nhiệt độ môi trường (46), Van EVAP (2E), Mức xăng (2F)
+        const baroResp = await bleService.sendCommand('0133', 350);
+        const baroBytes = this.extractDataBytes(baroResp, '33');
+        if (baroBytes.length >= 1) data.baroPressure = baroBytes[0];
+
+        const ambResp = await bleService.sendCommand('0146', 350);
+        const ambBytes = this.extractDataBytes(ambResp, '46');
+        if (ambBytes.length >= 1) data.ambientTemp = ambBytes[0] - 40;
+
+        const evapResp = await bleService.sendCommand('012E', 350);
+        const evapBytes = this.extractDataBytes(evapResp, '2E');
+        if (evapBytes.length >= 1) data.evapPurge = parseFloat(((evapBytes[0] * 100) / 255).toFixed(1));
+
+        const fulResp = await bleService.sendCommand('012F', 350);
+        const fulBytes = this.extractDataBytes(fulResp, '2F');
+        if (fulBytes.length >= 1) data.fuelLevel = Math.round((fulBytes[0] * 100) / 255);
+      } else if (this.pollCycle === 7) {
+        // Thời gian nổ máy (1F), Trạng thái MIL & Lỗi (01), Vòng lặp hòa khí (03), Số chu kỳ ấm (30), ODO xóa lỗi (31)
+        const rtResp = await bleService.sendCommand('011F', 350);
+        const rtBytes = this.extractDataBytes(rtResp, '1F');
+        if (rtBytes.length >= 2) data.runTime = (rtBytes[0] * 256) + rtBytes[1];
+
+        const milResp = await bleService.sendCommand('0101', 350);
+        const milBytes = this.extractDataBytes(milResp, '01');
+        if (milBytes.length >= 1) {
+          data.milOn = (milBytes[0] & 0x80) !== 0;
+          data.dtcCount = milBytes[0] & 0x7F;
+        }
+
+        const fsResp = await bleService.sendCommand('0103', 350);
+        const fsBytes = this.extractDataBytes(fsResp, '03');
+        if (fsBytes.length >= 1) {
+          data.fuelSystemStatus = fsBytes[0] === 2 ? 'CL (Closed Loop)' : fsBytes[0] === 1 ? 'OL (Open Loop)' : 'CL';
+        }
+
+        const wmResp = await bleService.sendCommand('0130', 350);
+        const wmBytes = this.extractDataBytes(wmResp, '30');
+        if (wmBytes.length >= 1) data.warmupsSinceClear = wmBytes[0];
+
+        const cdResp = await bleService.sendCommand('0131', 350);
+        const cdBytes = this.extractDataBytes(cdResp, '31');
+        if (cdBytes.length >= 2) data.distanceSinceClear = (cdBytes[0] * 256) + cdBytes[1];
       }
     } catch (e) {
       console.warn('Lỗi khi truy vấn Live Data PID:', e);

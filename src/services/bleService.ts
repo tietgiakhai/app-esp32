@@ -643,11 +643,13 @@ class BleService {
     // Live Data Mode 01
     if (upper.startsWith('01')) {
       const pid = upper.substring(2);
+
+      // Supported PIDs
       if (pid === '00') return '41 00 BE 3F B8 13';
-      if (pid === '01') {
-        const milByte = this.simState.milOn ? 0x82 : 0x00;
-        return `41 01 ${milByte.toString(16).padStart(2, '0').toUpperCase()} 00 00 00`;
-      }
+      if (pid === '20') return '41 20 80 07 E0 01';
+      if (pid === '40') return '41 40 7E D0 00 00';
+
+      // 1. Động cơ & Vận hành
       if (pid === '0C') {
         const raw = Math.round(this.simState.rpm * 4);
         const a = (raw >> 8) & 0xff;
@@ -658,29 +660,67 @@ class BleService {
         const a = Math.round(this.simState.speed) & 0xff;
         return `41 0D ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
-      if (pid === '05') {
-        const a = Math.round(this.simState.coolant + 40) & 0xff;
-        return `41 05 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
-      }
-      if (pid === '11') {
-        const a = Math.round((this.simState.throttle * 255) / 100) & 0xff;
-        return `41 11 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
-      }
       if (pid === '04') {
         const a = Math.round((this.simState.engineLoad * 255) / 100) & 0xff;
         return `41 04 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
+      }
+      if (pid === '43') return '41 43 2A 3A'; // AbsLoad: 42.4%
+      if (pid === '0E') return '41 0E 96';    // Timing: 11° BTDC
+      if (pid === '1F') return '41 1F 01 BA'; // RunTime: 442s
+
+      // 2. Khí nạp & Nhiên liệu
+      if (pid === '05') {
+        const a = Math.round(this.simState.coolant + 40) & 0xff;
+        return `41 05 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
       if (pid === '0F') {
         const a = Math.round(this.simState.intakeTemp + 40) & 0xff;
         return `41 0F ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
+      if (pid === '0B') return '41 0B 2B';    // MAP: 43 kPa
+      if (pid === '33') return '41 33 63';    // Baro: 99 kPa
+      if (pid === '46') return '41 46 55';    // Ambient: 45 °C
       if (pid === '2F') {
         const a = Math.round((this.simState.fuel * 255) / 100) & 0xff;
         return `41 2F ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
+      if (pid === '03') return '41 03 02 00'; // FuelSys: Closed Loop
+      if (pid === '06') return '41 06 7F';    // STFT: -0.78%
+      if (pid === '07') return '41 07 80';    // LTFT: 0.0%
+      if (pid === '44') return '41 44 80 00'; // Lambda: 1.000 λ
+      if (pid === '2E') return '41 2E 23';    // EVAP: 13.7%
+      if (pid === '51') return '41 51 01';    // FuelType: Gasoline
+
+      // 3. Bướm ga & Chân ga
+      if (pid === '11') {
+        const a = Math.round((this.simState.throttle * 255) / 100) & 0xff;
+        return `41 11 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
+      }
+      if (pid === '47') return '41 47 27';    // Thr B: 15.3%
+      if (pid === '45') return '41 45 12';    // RelThr: 7.1%
+      if (pid === '4C') return '41 4C 12';    // CmdThr: 7.1%
+      if (pid === '49') return '41 49 30';    // Accel D: 18.8%
+      if (pid === '4A') return '41 4A 18';    // Accel E: 9.4%
+      if (pid === '5A') return '41 5A 00';    // PedalRel: 0.0%
+
+      // 4. Khí xả & O2
+      if (pid === '14') return '41 14 14 7F'; // O2S1: 0.10V, -0.78%
+      if (pid === '15') return '41 15 A4 7F'; // O2S2: 0.82V, -0.78%
+      if (pid === '13') return '41 13 03';    // O2 Mask
+      if (pid === '1C') return '41 1C 06';    // EOBD
+
+      // 5. Điện áp & Giám sát lỗi
+      if (pid === '42') return '41 42 34 ED'; // ECU Volt: 13.55V
+      if (pid === '01') {
+        const milByte = this.simState.milOn ? 0x82 : 0x00;
+        return `41 01 ${milByte.toString(16).padStart(2, '0').toUpperCase()} 00 00 00`;
+      }
+      if (pid === '21') return '41 21 00 00'; // MILDist: 0 km
+      if (pid === '30') return '41 30 01';    // Warmups: 1
+      if (pid === '31') return '41 31 00 00'; // DTCDist: 0 km
     }
 
-    if (upper === 'ATRV') return '13.8V';
+    if (upper === 'ATRV') return '13.55V';
     return 'NO DATA';
   }
 }
