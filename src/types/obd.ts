@@ -8,7 +8,15 @@ export type ScreenType =
   | 'vehicle_info' 
   | 'report_history' 
   | 'support'
-  | 'obd_hub';
+  | 'obd_hub'
+  | 'terminal';
+
+export interface BleLogEntry {
+  id: string;
+  timestamp: string;
+  direction: 'TX' | 'RX' | 'INFO' | 'ERR';
+  text: string;
+}
 
 export type ConnectionStatus = 'disconnected' | 'scanning' | 'connecting' | 'connected';
 

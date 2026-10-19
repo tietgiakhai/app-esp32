@@ -1,11 +1,23 @@
-import { BleDevice, ConnectionStatus } from '../types/obd';
+import { BleDevice, ConnectionStatus, BleLogEntry } from '../types/obd';
 import { Capacitor } from '@capacitor/core';
 import { BleClient, textToDataView, dataViewToText } from '@capacitor-community/bluetooth-le';
 
-// Nordic UART Service (NUS) UUIDs chuẩn
+// Các UUID BLE UART phổ biến nhất được dùng cho ESP32 và OBD-II Dongle
 export const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 export const NUS_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // Phone Writes to ESP32
 export const NUS_TX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // ESP32 Notifies to Phone
+
+export const ALL_OPTIONAL_SERVICES = [
+  NUS_SERVICE_UUID,
+  '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 / CC2541 / ESP32 Serial
+  '0000fff0-0000-1000-8000-00805f9b34fb', // Microchip / Custom ESP32
+  '4fafc201-1fb5-459e-8fcc-c5c9c331914b', // ESP32 BLE C++ Sample
+  '000018f0-0000-1000-8000-00805f9b34fb', // OBD-II Dongle generic
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Viecar / OBDLink
+  '0000ffe5-0000-1000-8000-00805f9b34fb',
+  '00001800-0000-1000-8000-00805f9b34fb',
+  '00001801-0000-1000-8000-00805f9b34fb'
+];
 
 export const isIosDevice = (): boolean => {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
@@ -20,18 +32,27 @@ export const isWebBleSupported = (): boolean => {
 
 type DataListener = (data: string) => void;
 type StatusListener = (status: ConnectionStatus) => void;
+type LogListener = (logs: BleLogEntry[]) => void;
 
 class BleService {
   private status: ConnectionStatus = 'disconnected';
   private statusListeners: StatusListener[] = [];
   private dataListeners: DataListener[] = [];
+  private logListeners: LogListener[] = [];
   private connectedDevice: BleDevice | null = null;
   private isSimulator: boolean = false;
   private vehicleLinked: boolean = false;
   private vehicleLinkListeners: ((linked: boolean) => void)[] = [];
   
-  // Capacitor Native BLE handle
+  // Lịch sử gói tin (TX / RX log)
+  private logEntries: BleLogEntry[] = [];
+  private maxLogs: number = 300;
+
+  // Capacitor Native BLE handles
   private nativeDeviceId: string | null = null;
+  private nativeServiceUuid: string = NUS_SERVICE_UUID;
+  private nativeTxCharUuid: string = NUS_TX_CHAR_UUID;
+  private nativeRxCharUuid: string = NUS_RX_CHAR_UUID;
 
   // Web Bluetooth handles
   private webBleDevice: any = null;
@@ -39,7 +60,7 @@ class BleService {
   private rxCharacteristic: any = null;
   private txCharacteristic: any = null;
 
-  // Simulator internal state
+  // Simulator internal state (chỉ dùng khi test giả lập trên bàn)
   private simState = {
     rpm: 850,
     speed: 0,
@@ -50,7 +71,7 @@ class BleService {
     fuel: 65,
     milOn: true,
     hasDtc: true,
-    vin: 'MK2NC1W09LP128945', // Mitsubishi Xpander 2020 màu đen (L = 2020)
+    vin: 'MK2NC1W09LP128945', // Mitsubishi Xpander 2020
     time: 0
   };
   private simInterval: any = null;
@@ -62,7 +83,6 @@ class BleService {
   private startSimTicker() {
     this.simInterval = setInterval(() => {
       this.simState.time += 0.1;
-      // Vòng tua biến thiên tự nhiên
       const wave = Math.sin(this.simState.time);
       this.simState.rpm = Math.max(780, Math.round(900 + wave * 900 + 400));
       this.simState.speed = Math.max(0, Math.round(this.simState.rpm / 38));
@@ -116,85 +136,148 @@ class BleService {
     };
   }
 
+  public onLog(callback: LogListener) {
+    this.logListeners.push(callback);
+    callback(this.logEntries);
+    return () => {
+      this.logListeners = this.logListeners.filter(l => l !== callback);
+    };
+  }
+
+  public getLogEntries(): BleLogEntry[] {
+    return [...this.logEntries];
+  }
+
+  public clearLogs() {
+    this.logEntries = [];
+    this.notifyLogs();
+  }
+
+  private addLog(direction: 'TX' | 'RX' | 'INFO' | 'ERR', text: string) {
+    const entry: BleLogEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: new Date().toLocaleTimeString('vi-VN', { hour12: false }) + '.' + String(Date.now() % 1000).padStart(3, '0'),
+      direction,
+      text: text.trim()
+    };
+    this.logEntries.push(entry);
+    if (this.logEntries.length > this.maxLogs) {
+      this.logEntries.shift();
+    }
+    this.notifyLogs();
+  }
+
+  private notifyLogs() {
+    const copy = [...this.logEntries];
+    this.logListeners.forEach(l => l(copy));
+  }
+
   private setStatus(status: ConnectionStatus) {
     this.status = status;
     this.statusListeners.forEach(l => l(status));
   }
 
   private emitData(data: string) {
+    this.addLog('RX', data);
     this.dataListeners.forEach(l => l(data));
   }
 
   /**
-   * Kết nối vào chế độ Giả lập (ESP32 Simulator Mode)
+   * Kết nối vào chế độ Giả lập (ESP32 Virtual Mode) - Dùng khi không có phần cứng
    */
   public async connectSimulator(): Promise<void> {
     this.setStatus('connecting');
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 400));
     this.isSimulator = true;
     this.connectedDevice = {
       id: 'SIMULATOR-001',
       name: 'ESP32-OBD2 (Virtual Simulator)',
       rssi: -42
     };
+    this.addLog('INFO', 'Đã bật chế độ mô phỏng (Virtual Simulator)');
     this.setStatus('connected');
   }
 
   /**
-   * Kết nối tới thiết bị Bluetooth được chọn từ danh sách
+   * Kết nối tới thiết bị đã chọn từ danh sách quét
    */
   public async connectDevice(device: BleDevice): Promise<void> {
-    this.setStatus('connecting');
-    await new Promise(r => setTimeout(r, 700));
-    this.isSimulator = true;
-    this.connectedDevice = {
-      id: device.id,
-      name: device.name,
-      rssi: device.rssi
-    };
-    this.setStatus('connected');
+    if (device.id.startsWith('SIMULATOR')) {
+      return this.connectSimulator();
+    }
+    // Thiết bị thật -> kích hoạt quét và kết nối phần cứng thật
+    await this.connectRealDevice(false);
   }
 
   /**
-   * Quét và kết nối thiết bị Bluetooth LE thật qua Web Bluetooth hoặc Capacitor BLE
-   * @param onlyNamed: Nếu true, chỉ hiển thị các thiết bị có tên (ESP32, OBD, ELM, BK, Xpander...) và loại bỏ các thiết bị rác không tên
+   * Quét và kết nối thiết bị Bluetooth LE THẬT (tương thích mọi code ESP32)
    */
-  public async connectRealDevice(onlyNamed: boolean = true): Promise<BleDevice | null> {
+  public async connectRealDevice(onlyNamed: boolean = false): Promise<BleDevice | null> {
     this.setStatus('scanning');
+    this.addLog('INFO', 'Bắt đầu quét thiết bị Bluetooth xung quanh...');
 
-    // 0. Nếu đang chạy trên ứng dụng Native (iOS / Android qua Capacitor)
+    // 0. Chạy trên ứng dụng Native iOS / Android (Capacitor)
     if (Capacitor.isNativePlatform()) {
       try {
         await BleClient.initialize();
-        const ALL_SERVICES = [
-          NUS_SERVICE_UUID,
-          '0000ffe0-0000-1000-8000-00805f9b34fb',
-          '0000fff0-0000-1000-8000-00805f9b34fb'
-        ];
+        this.addLog('INFO', 'Khởi tạo Capacitor BLE thành công');
 
         const device = await BleClient.requestDevice({
-          optionalServices: ALL_SERVICES
+          optionalServices: ALL_OPTIONAL_SERVICES
         });
 
         this.setStatus('connecting');
+        this.addLog('INFO', `Đang kết nối tới ${device.name || device.deviceId}...`);
         this.nativeDeviceId = device.deviceId;
 
         await BleClient.connect(device.deviceId, () => {
+          this.addLog('ERR', 'Thiết bị ESP32 đã ngắt kết nối BLE');
           this.disconnect();
         });
 
+        // Tự động nhận diện Service & Characteristic của ESP32 (không phụ thuộc vào UUID cố định)
+        let foundTxService = NUS_SERVICE_UUID;
+        let foundTxChar = NUS_TX_CHAR_UUID;
+        let foundRxService = NUS_SERVICE_UUID;
+        let foundRxChar = NUS_RX_CHAR_UUID;
+
+        try {
+          const services = await BleClient.getServices(device.deviceId);
+          for (const s of services) {
+            for (const c of s.characteristics) {
+              if (c.properties.notify || c.properties.indicate) {
+                foundTxService = s.uuid;
+                foundTxChar = c.uuid;
+              }
+              if (c.properties.write || c.properties.writeWithoutResponse) {
+                foundRxService = s.uuid;
+                foundRxChar = c.uuid;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Lỗi đọc Services từ ESP32:', e);
+        }
+
+        this.nativeServiceUuid = foundRxService;
+        this.nativeRxCharUuid = foundRxChar;
+        this.nativeTxCharUuid = foundTxChar;
+
+        // Đăng ký nhận dữ liệu từ ESP32
         try {
           await BleClient.startNotifications(
             device.deviceId,
-            NUS_SERVICE_UUID,
-            NUS_TX_CHAR_UUID,
+            foundTxService,
+            foundTxChar,
             (value) => {
               const text = dataViewToText(value);
               this.emitData(text);
             }
           );
+          this.addLog('INFO', `Đã kích hoạt Notifications trên RX: ${foundTxChar.substring(0, 8)}...`);
         } catch (notifErr) {
-          console.warn('Start notifications NUS error:', notifErr);
+          console.warn('Start notifications error:', notifErr);
+          this.addLog('ERR', `Không thể bật Notify: ${String(notifErr)}`);
         }
 
         let displayName = device.name;
@@ -202,38 +285,28 @@ class BleService {
           displayName = `ESP32-OBD2 (${device.deviceId.slice(-4)})`;
         }
 
-        this.isSimulator = false;
+        this.isSimulator = false; // CHẮC CHẮN LÀ THIẾT BỊ THẬT, KHÔNG MÔ PHỎNG
         this.connectedDevice = {
           id: device.deviceId,
           name: displayName,
           rssi: -50
         };
         this.setStatus('connected');
+        this.addLog('INFO', `✓ Đã kết nối thành công với thiết bị thật: ${displayName}`);
         return this.connectedDevice;
       } catch (nativeErr: any) {
         console.warn('Capacitor native BLE error or cancelled:', nativeErr);
+        this.addLog('ERR', `Lỗi kết nối BLE: ${nativeErr.message || String(nativeErr)}`);
         this.setStatus('disconnected');
         return null;
       }
     }
 
-    // 1. Kiểm tra Web Bluetooth nếu chạy trên trình duyệt hỗ trợ (Chrome, Edge, Bluefy)
+    // 1. Chạy trên Trình duyệt Web (Chrome, Edge, Bluefy trên iOS)
     if (typeof navigator !== 'undefined' && (navigator as any).bluetooth) {
       try {
-        const ALL_OPTIONAL_SERVICES = [
-          NUS_SERVICE_UUID,
-          '0000ffe0-0000-1000-8000-00805f9b34fb',
-          '0000fff0-0000-1000-8000-00805f9b34fb',
-          '4fafc201-1fb5-459e-8fcc-c5c9c331914b',
-          '000018f0-0000-1000-8000-00805f9b34fb',
-          '0000ffe5-0000-1000-8000-00805f9b34fb',
-          '00001800-0000-1000-8000-00805f9b34fb',
-          '00001801-0000-1000-8000-00805f9b34fb'
-        ];
-
         let requestOptions: any;
         if (onlyNamed) {
-          // LỌC CHẶT CHẼ: CHỈ HIỂN THỊ CÁC THIẾT BỊ CÓ TÊN (ẨN TOÀN BỘ THIẾT BỊ KHÔNG TÊN / UNKNOWN)
           requestOptions = {
             filters: [
               { namePrefix: 'ESP' },
@@ -246,14 +319,12 @@ class BleService {
               { namePrefix: 'BLE' },
               { namePrefix: 'Auto' },
               { namePrefix: 'Diag' },
-              { namePrefix: 'HCMUT' },
-              { namePrefix: 'HC-' },
-              { namePrefix: 'V-Link' },
-              { namePrefix: 'Viecar' }
+              { namePrefix: 'HCMUT' }
             ],
             optionalServices: ALL_OPTIONAL_SERVICES
           };
         } else {
+          // Hiển thị TOÀN BỘ mọi thiết bị Bluetooth để người dùng chọn đúng ESP32 của mình
           requestOptions = {
             acceptAllDevices: true,
             optionalServices: ALL_OPTIONAL_SERVICES
@@ -263,55 +334,55 @@ class BleService {
         const device = await (navigator as any).bluetooth.requestDevice(requestOptions);
 
         this.setStatus('connecting');
+        this.addLog('INFO', `Đang kết nối GATT tới ${device.name || device.id}...`);
         this.webBleDevice = device;
         
         device.addEventListener('gattserverdisconnected', () => {
+          this.addLog('ERR', 'Thiết bị ESP32 đã ngắt kết nối');
           this.disconnect();
         });
 
         const server = await device.gatt.connect();
         this.webBleServer = server;
 
+        // Tự động tìm kiếm Services & Characteristics của ESP32
+        let services: any[] = [];
         try {
-          let service: any = null;
-          try {
-            service = await server.getPrimaryService(NUS_SERVICE_UUID);
-          } catch {
-            for (const uuid of ALL_OPTIONAL_SERVICES) {
-              try {
-                service = await server.getPrimaryService(uuid);
-                if (service) break;
-              } catch {}
-            }
-          }
-
-          if (service) {
+          services = await server.getPrimaryServices();
+        } catch {
+          for (const uuid of ALL_OPTIONAL_SERVICES) {
             try {
-              this.txCharacteristic = await service.getCharacteristic(NUS_TX_CHAR_UUID);
-              this.rxCharacteristic = await service.getCharacteristic(NUS_RX_CHAR_UUID);
-            } catch {
-              const characteristics = await service.getCharacteristics();
-              for (const c of characteristics) {
-                if ((c.properties.notify || c.properties.indicate) && !this.txCharacteristic) {
-                  this.txCharacteristic = c;
-                }
-                if ((c.properties.write || c.properties.writeWithoutResponse) && !this.rxCharacteristic) {
-                  this.rxCharacteristic = c;
-                }
+              const s = await server.getPrimaryService(uuid);
+              if (s) services.push(s);
+            } catch {}
+          }
+        }
+
+        this.txCharacteristic = null;
+        this.rxCharacteristic = null;
+
+        for (const s of services) {
+          try {
+            const characteristics = await s.getCharacteristics();
+            for (const c of characteristics) {
+              if ((c.properties.notify || c.properties.indicate) && !this.txCharacteristic) {
+                this.txCharacteristic = c;
+              }
+              if ((c.properties.write || c.properties.writeWithoutResponse) && !this.rxCharacteristic) {
+                this.rxCharacteristic = c;
               }
             }
+          } catch {}
+        }
 
-            if (this.txCharacteristic) {
-              await this.txCharacteristic.startNotifications();
-              this.txCharacteristic.addEventListener('characteristicvaluechanged', (e: any) => {
-                const value = e.target.value;
-                const text = new TextDecoder().decode(value);
-                this.emitData(text);
-              });
-            }
-          }
-        } catch (svcErr) {
-          console.warn('NUS service optional check:', svcErr);
+        if (this.txCharacteristic) {
+          await this.txCharacteristic.startNotifications();
+          this.txCharacteristic.addEventListener('characteristicvaluechanged', (e: any) => {
+            const value = e.target.value;
+            const text = new TextDecoder().decode(value);
+            this.emitData(text);
+          });
+          this.addLog('INFO', 'Đã bật nhận dữ liệu Notify từ ESP32');
         }
 
         let displayName = device.name;
@@ -319,33 +390,38 @@ class BleService {
           displayName = `ESP32-OBD2 (${device.id.slice(-4)})`;
         }
 
-        this.isSimulator = false;
+        this.isSimulator = false; // CHẮC CHẮN LÀ THIẾT BỊ THẬT, KHÔNG MÔ PHỎNG
         this.connectedDevice = {
           id: device.id,
           name: displayName,
           rssi: -52
         };
         this.setStatus('connected');
+        this.addLog('INFO', `✓ Đã kết nối thành công: ${displayName}`);
         return this.connectedDevice;
       } catch (err: any) {
         console.warn('Web Bluetooth error or cancelled:', err);
         if (err.name !== 'NotFoundError') {
-          // Lỗi không phải do người dùng bấm Cancel
+          this.addLog('ERR', `Lỗi Web Bluetooth: ${err.message || String(err)}`);
+        } else {
+          this.addLog('INFO', 'Người dùng đã hủy chọn thiết bị Bluetooth');
         }
+        this.setStatus('disconnected');
+        return null;
       }
     }
 
-    // 2. Nếu không có Web Bluetooth (ví dụ trên môi trường web thông thường không cấp quyền BLE),
-    // Tự động kết nối chế độ Simulator để trải nghiệm ngay
-    console.log('Bluetooth API chưa kích hoạt hoặc người dùng chọn giả lập. Đang kết nối ESP32 Virtual...');
-    await this.connectSimulator();
-    return this.connectedDevice;
+    // 2. Nếu không hỗ trợ Bluetooth hoặc trên môi trường Web bị giới hạn
+    this.addLog('ERR', 'Trình duyệt chưa hỗ trợ Web Bluetooth API');
+    this.setStatus('disconnected');
+    return null;
   }
 
   /**
    * Ngắt kết nối
    */
   public disconnect() {
+    this.addLog('INFO', 'Đang ngắt kết nối thiết bị...');
     if (this.nativeDeviceId && Capacitor.isNativePlatform()) {
       BleClient.disconnect(this.nativeDeviceId).catch(console.warn);
       this.nativeDeviceId = null;
@@ -362,76 +438,156 @@ class BleService {
     this.vehicleLinked = false;
     this.vehicleLinkListeners.forEach(l => l(false));
     this.setStatus('disconnected');
+    this.addLog('INFO', 'Đã ngắt kết nối hoàn toàn');
   }
 
   /**
    * Gửi một lệnh ELM327 / OBD2 tới ESP32 và chờ phản hồi
+   * Hỗ trợ tự động hoàn tất khi gặp '>', '\r', '\n' hoặc chuỗi kết quả chuẩn OBD
    */
-  public async sendCommand(cmd: string, timeoutMs: number = 2500): Promise<string> {
+  public async sendCommand(cmd: string, timeoutMs: number = 2000): Promise<string> {
     if (this.status !== 'connected') {
       throw new Error('Chưa kết nối thiết bị quét ESP32 OBD-II');
     }
 
     const clean = cmd.trim();
+    this.addLog('TX', clean);
 
-    // Nếu đang chạy Simulator
+    // Nếu đang chạy Simulator thủ công
     if (this.isSimulator) {
-      return this.handleSimulatorCommand(clean);
+      const simResp = await this.handleSimulatorCommand(clean);
+      this.addLog('RX', simResp);
+      return simResp;
     }
 
-    // Nếu chạy thiết bị thật qua Capacitor Native BLE (iOS / Android)
+    // Bộ nhận diện xem phản hồi đã hoàn tất hay chưa
+    const isResponseComplete = (buffer: string, command: string): boolean => {
+      // 1. Kết thúc bằng dấu nhắc ELM327 '>'
+      if (buffer.includes('>')) return true;
+
+      const trimmed = buffer.trim();
+      if (trimmed.length === 0) return false;
+
+      // 2. Chứa các từ khóa kết thúc tiêu chuẩn
+      if (
+        trimmed.includes('OK') ||
+        trimmed.includes('NO DATA') ||
+        trimmed.includes('ERROR') ||
+        trimmed.includes('UNABLE TO CONNECT') ||
+        trimmed.includes('BUS INIT: ...ERROR') ||
+        trimmed.includes('STOPPED') ||
+        trimmed.includes('?')
+      ) {
+        return true;
+      }
+
+      // 3. Phản hồi Live Data (41 XX ...) khi có ký tự xuống dòng
+      if (command.startsWith('01') && (buffer.includes('\r') || buffer.includes('\n'))) {
+        if (trimmed.includes('41') || trimmed.includes('41 ')) {
+          return true;
+        }
+      }
+
+      // 4. Phản hồi xóa lỗi (04 -> 44)
+      if (command === '04' && (trimmed.includes('44') || trimmed.includes('OK'))) {
+        return true;
+      }
+
+      // 5. Điện áp bình ắc quy ATRV (ví dụ: 13.8V)
+      if (command.toUpperCase() === 'ATRV' && trimmed.includes('V')) {
+        return true;
+      }
+
+      // 6. Số VIN (0902): nếu đã nhận đủ 17 ký tự ASCII VIN hoặc 5 dòng frame
+      if (command.startsWith('0902')) {
+        const vinMatch = trimmed.match(/[A-HJ-NPR-Z0-9]{17}/i);
+        if (vinMatch) return true;
+      }
+
+      return false;
+    };
+
+    // A. Chạy thiết bị thật qua Capacitor Native BLE (iOS / Android)
     if (this.nativeDeviceId && Capacitor.isNativePlatform()) {
       return new Promise<string>((resolve, reject) => {
         let responseBuffer = '';
+        let debounceTimer: any = null;
+
         const timer = setTimeout(() => {
           cleanup();
           resolve(responseBuffer.trim());
         }, timeoutMs);
 
+        const finish = () => {
+          clearTimeout(timer);
+          if (debounceTimer) clearTimeout(debounceTimer);
+          cleanup();
+          resolve(responseBuffer.replace('>', '').trim());
+        };
+
         const onDataChunk = (text: string) => {
           responseBuffer += text;
-          if (responseBuffer.includes('>')) {
-            clearTimeout(timer);
-            cleanup();
-            resolve(responseBuffer.replace('>', '').trim());
+          if (isResponseComplete(responseBuffer, clean)) {
+            // Cho multi-line (VIN 0902 hoặc mã lỗi 03/07), chờ 60ms gom thêm frame
+            if (clean.startsWith('0902') || clean === '03' || clean === '07') {
+              if (debounceTimer) clearTimeout(debounceTimer);
+              debounceTimer = setTimeout(finish, 60);
+            } else {
+              finish();
+            }
           }
         };
 
         const cleanup = this.onData(onDataChunk);
-        const payload = textToDataView(clean + '\r\n');
-        BleClient.write(this.nativeDeviceId!, NUS_SERVICE_UUID, NUS_RX_CHAR_UUID, payload).catch((err: any) => {
+        const payload = textToDataView(clean + '\r');
+        BleClient.write(this.nativeDeviceId!, this.nativeServiceUuid, this.nativeRxCharUuid, payload).catch((err: any) => {
           clearTimeout(timer);
+          if (debounceTimer) clearTimeout(debounceTimer);
           cleanup();
+          this.addLog('ERR', `Lỗi gửi lệnh Native: ${err.message || String(err)}`);
           reject(err);
         });
       });
     }
 
-    // Nếu chạy thiết bị thật qua Web Bluetooth
+    // B. Chạy thiết bị thật qua Web Bluetooth
     if (this.rxCharacteristic) {
       return new Promise<string>((resolve, reject) => {
         let responseBuffer = '';
+        let debounceTimer: any = null;
+
         const timer = setTimeout(() => {
           cleanup();
           resolve(responseBuffer.trim());
         }, timeoutMs);
 
+        const finish = () => {
+          clearTimeout(timer);
+          if (debounceTimer) clearTimeout(debounceTimer);
+          cleanup();
+          resolve(responseBuffer.replace('>', '').trim());
+        };
+
         const onDataChunk = (text: string) => {
           responseBuffer += text;
-          if (responseBuffer.includes('>')) {
-            clearTimeout(timer);
-            cleanup();
-            resolve(responseBuffer.replace('>', '').trim());
+          if (isResponseComplete(responseBuffer, clean)) {
+            if (clean.startsWith('0902') || clean === '03' || clean === '07') {
+              if (debounceTimer) clearTimeout(debounceTimer);
+              debounceTimer = setTimeout(finish, 60);
+            } else {
+              finish();
+            }
           }
         };
 
         const cleanup = this.onData(onDataChunk);
-
         const encoder = new TextEncoder();
-        const payload = encoder.encode(clean + '\r\n');
+        const payload = encoder.encode(clean + '\r');
         this.rxCharacteristic.writeValue(payload).catch((err: any) => {
           clearTimeout(timer);
+          if (debounceTimer) clearTimeout(debounceTimer);
           cleanup();
+          this.addLog('ERR', `Lỗi gửi lệnh Web BLE: ${err.message || String(err)}`);
           reject(err);
         });
       });
@@ -441,12 +597,10 @@ class BleService {
   }
 
   /**
-   * Bộ xử lý lệnh phản hồi giả lập chân thực theo chuẩn ELM327
+   * Bộ xử lý lệnh phản hồi giả lập (chỉ dùng khi người dùng chọn Simulator)
    */
   private async handleSimulatorCommand(cmd: string): Promise<string> {
-    // Giả lập độ trễ truyền thông CAN bus (30ms - 80ms)
-    await new Promise(r => setTimeout(r, 40));
-
+    await new Promise(r => setTimeout(r, 30));
     const upper = cmd.toUpperCase().replace(/\s+/g, '');
 
     // AT Commands
@@ -466,8 +620,7 @@ class BleService {
     // 03 - Read Stored DTCs
     if (upper === '03') {
       if (this.simState.hasDtc) {
-        // P0300 (03 00) và P0171 (01 71)
-        return '43 02 03 00 01 71';
+        return '43 02 03 00 01 71'; // P0300 và P0171
       }
       return '43 00';
     }
@@ -475,8 +628,7 @@ class BleService {
     // 07 - Read Pending DTCs
     if (upper === '07') {
       if (this.simState.hasDtc) {
-        // P0420 (04 20)
-        return '47 01 04 20';
+        return '47 01 04 20'; // P0420
       }
       return '47 00';
     }
@@ -491,59 +643,44 @@ class BleService {
     // Live Data Mode 01
     if (upper.startsWith('01')) {
       const pid = upper.substring(2);
-
       if (pid === '00') return '41 00 BE 3F B8 13';
-
       if (pid === '01') {
         const milByte = this.simState.milOn ? 0x82 : 0x00;
         return `41 01 ${milByte.toString(16).padStart(2, '0').toUpperCase()} 00 00 00`;
       }
-
-      // RPM = ((A*256)+B)/4
       if (pid === '0C') {
         const raw = Math.round(this.simState.rpm * 4);
         const a = (raw >> 8) & 0xff;
         const b = raw & 0xff;
         return `41 0C ${a.toString(16).padStart(2, '0').toUpperCase()} ${b.toString(16).padStart(2, '0').toUpperCase()}`;
       }
-
-      // Speed = A
       if (pid === '0D') {
         const a = Math.round(this.simState.speed) & 0xff;
         return `41 0D ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
-
-      // Coolant = A - 40
       if (pid === '05') {
         const a = Math.round(this.simState.coolant + 40) & 0xff;
         return `41 05 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
-
-      // Throttle = A * 100 / 255
       if (pid === '11') {
         const a = Math.round((this.simState.throttle * 255) / 100) & 0xff;
         return `41 11 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
-
-      // Engine Load = A * 100 / 255
       if (pid === '04') {
         const a = Math.round((this.simState.engineLoad * 255) / 100) & 0xff;
         return `41 04 ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
-
-      // Intake Temp = A - 40
       if (pid === '0F') {
         const a = Math.round(this.simState.intakeTemp + 40) & 0xff;
         return `41 0F ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
-
-      // Fuel Tank Level = A * 100 / 255
       if (pid === '2F') {
         const a = Math.round((this.simState.fuel * 255) / 100) & 0xff;
         return `41 2F ${a.toString(16).padStart(2, '0').toUpperCase()}`;
       }
     }
 
+    if (upper === 'ATRV') return '13.8V';
     return 'NO DATA';
   }
 }

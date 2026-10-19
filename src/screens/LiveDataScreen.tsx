@@ -48,7 +48,10 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
     if (!isConnected) return;
 
     let isMounted = true;
-    const interval = setInterval(async () => {
+    let timeoutId: any = null;
+
+    const poll = async () => {
+      if (!isMounted) return;
       try {
         const data = await ObdProtocol.queryLiveData();
         if (isMounted) {
@@ -65,12 +68,18 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
         }
       } catch (e) {
         console.warn('Live poll error:', e);
+      } finally {
+        if (isMounted) {
+          timeoutId = setTimeout(poll, 80);
+        }
       }
-    }, 250);
+    };
+
+    poll();
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [isConnected]);
 

@@ -15,6 +15,7 @@ import { VehicleInfoScreen } from './screens/VehicleInfoScreen';
 import { ReportHistoryScreen } from './screens/ReportHistoryScreen';
 import { SupportScreen } from './screens/SupportScreen';
 import { ObdHubScreen } from './screens/ObdHubScreen';
+import { TerminalScreen } from './screens/TerminalScreen';
 
 export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
@@ -35,7 +36,7 @@ export const App: React.FC = () => {
   const device = bleService.getConnectedDevice();
 
   // Xác định xem có hiển thị nút Back hay không
-  const isSubScreen = ['pairing_guide', 'diagnostics', 'vehicle_info', 'obd_hub'].includes(currentScreen);
+  const isSubScreen = ['pairing_guide', 'diagnostics', 'vehicle_info', 'obd_hub', 'terminal'].includes(currentScreen);
   
   // Tiêu đề của màn hình
   const getScreenTitle = () => {
@@ -46,6 +47,8 @@ export const App: React.FC = () => {
         return 'Live Data';
       case 'obd_hub':
         return 'Chẩn đoán OBD-II';
+      case 'terminal':
+        return 'OBD-II Terminal';
       case 'diagnostics':
         return 'OBD-II Diagnostics';
       case 'vehicle_info':
@@ -120,6 +123,14 @@ export const App: React.FC = () => {
             <VehicleInfoScreen
               status={status}
               onConnectPrompt={() => setShowConnectModal(true)}
+            />
+          )}
+
+          {currentScreen === 'terminal' && (
+            <TerminalScreen
+              status={status}
+              onOpenConnectModal={() => setShowConnectModal(true)}
+              onBack={() => setCurrentScreen('obd_hub')}
             />
           )}
 

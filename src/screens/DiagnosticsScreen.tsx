@@ -54,10 +54,6 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
       onConnectPrompt();
       return;
     }
-    // Bất khả thi quét lỗi khi chưa liên kết được với xe!
-    if (!isVehicleLinked) {
-      return;
-    }
     setLoading(true);
     setEraseSuccess(false);
     try {
@@ -138,20 +134,20 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
 
           <button
             onClick={handleScanDTCs}
-            disabled={!isVehicleLinked || loading}
-            title={!isVehicleLinked ? 'Bất khả thi khi chưa kết nối với xe' : 'Quét mã lỗi ECU'}
+            disabled={!isConnected || loading}
+            title={!isConnected ? 'Cần kết nối Bluetooth với ESP32 trước' : 'Quét mã lỗi ECU'}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-              !isVehicleLinked
+              !isConnected
                 ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                 : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/20 active:scale-95'
             }`}
           >
-            {!isVehicleLinked ? (
+            {!isConnected ? (
               <Lock className="w-3.5 h-3.5" />
             ) : (
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             )}
-            <span>{loading ? 'Đang quét...' : !isVehicleLinked ? 'Chưa nối xe' : 'Quét DTCs'}</span>
+            <span>{loading ? 'Đang quét...' : !isConnected ? 'Chưa nối ESP32' : 'Quét DTCs'}</span>
           </button>
         </div>
 
