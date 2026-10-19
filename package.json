@@ -21,7 +21,6 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.9",
-    "@rolldown/binding-win32-x64-msvc": "^1.2.11",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
