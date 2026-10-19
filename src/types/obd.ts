@@ -8,8 +8,7 @@ export type ScreenType =
   | 'vehicle_info' 
   | 'report_history' 
   | 'support'
-  | 'obd_hub'
-  | 'terminal';
+  | 'obd_hub';
 
 export interface BleLogEntry {
   id: string;

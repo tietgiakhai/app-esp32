@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, ShieldCheck, ChevronRight, Cpu, ArrowLeft, Car, CheckCircle2, Terminal } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, ChevronRight, Cpu, ArrowLeft, Car, CheckCircle2 } from 'lucide-react';
 import { ScreenType, ConnectionStatus } from '../types/obd';
 import { bleService } from '../services/bleService';
 
@@ -140,40 +140,6 @@ export const ObdHubScreen: React.FC<ObdHubScreenProps> = ({
             </div>
 
             <ChevronRight className="w-5 h-5 text-slate-300 self-center group-hover:text-indigo-500 transition-colors" />
-          </div>
-        </div>
-
-        {/* Mục 3: OBD Terminal & Raw Monitor */}
-        <div
-          onClick={() => onNavigate('terminal')}
-          className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs hover:shadow-md hover:border-blue-400 transition-all cursor-pointer active:scale-[0.99] group"
-        >
-          <div className="flex items-start gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-slate-900 text-emerald-400 flex items-center justify-center shrink-0 border border-slate-800 group-hover:scale-105 transition-transform">
-              <Terminal className="w-6 h-6" />
-            </div>
-
-            <div className="flex-1">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <img src="/logo-bachkhoa.png" alt="BK" className="w-3.5 h-3.5 object-contain" />
-                <h3 className="text-base font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                  OBD Terminal & Raw Monitor
-                </h3>
-              </div>
-              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                Giám sát gói tin RAW và gửi trực tiếp các lệnh PID (010C, 0902, 03, ATRV...) tới mạch ESP32 để xem phản hồi byte thực tế.
-              </p>
-              <div className="mt-2.5 flex items-center gap-2">
-                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                  Gói tin Real-time
-                </span>
-                <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                  Gửi lệnh thủ công
-                </span>
-              </div>
-            </div>
-
-            <ChevronRight className="w-5 h-5 text-slate-300 self-center group-hover:text-blue-500 transition-colors" />
           </div>
         </div>
       </div>
