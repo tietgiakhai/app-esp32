@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { ConnectionStatus, SensorData } from '../types/obd';
 import { GaugeMeter } from '../components/Gauges/GaugeMeter';
-import { LiveChart } from '../components/Gauges/LiveChart';
 import { ObdProtocol } from '../services/obdProtocol';
 import { bleService } from '../services/bleService';
 import { XPANDER_LIVE_PIDS, LIVE_CATEGORIES } from '../services/xpanderPids';
-import { Play, Square, Search, ChevronDown, ChevronUp, Layers, Gauge, LineChart, Info, CheckCircle2 } from 'lucide-react';
+import { Play, Square, Search, ChevronDown, ChevronUp, Layers, Gauge, Info, CheckCircle2 } from 'lucide-react';
 
 interface LiveDataScreenProps {
   status: ConnectionStatus;
@@ -17,7 +16,7 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
   onConnectScanTool
 }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'past_recordings'>('dashboard');
-  const [viewMode, setViewMode] = useState<'gauges' | 'list' | 'charts'>('list');
+  const [viewMode, setViewMode] = useState<'gauges' | 'list'>('gauges');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [expandedPid, setExpandedPid] = useState<string | null>(null);
@@ -105,7 +104,6 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
         console.warn('Live poll error:', e);
       } finally {
         if (isMounted) {
-          // Lên lịch lần quét tiếp theo sau khi lần trước đã phản hồi
           timeoutId = setTimeout(poll, 70);
         }
       }
@@ -149,6 +147,50 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
       item.shortName.toLowerCase().includes(q)
     );
   });
+
+  // Hàm tính tỷ lệ % và màu sắc cho thanh đồng hồ đo
+  const getGaugeProgress = (val: string | number, min: number = 0, max: number = 100) => {
+    if (typeof val !== 'number') return { percent: 100, isNumeric: false };
+    const clamped = Math.min(Math.max(val, min), max);
+    const percent = max > min ? Math.round(((clamped - min) / (max - min)) * 100) : 0;
+    return { percent, isNumeric: true };
+  };
+
+  const getCategoryColor = (cat: string) => {
+    switch (cat) {
+      case 'engine':
+        return {
+          bar: 'bg-gradient-to-r from-blue-500 to-indigo-600',
+          badge: 'bg-blue-50 text-blue-700 border-blue-200',
+          dot: 'bg-blue-500'
+        };
+      case 'fuel_air':
+        return {
+          bar: 'bg-gradient-to-r from-emerald-500 to-teal-600',
+          badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+          dot: 'bg-emerald-500'
+        };
+      case 'throttle':
+        return {
+          bar: 'bg-gradient-to-r from-amber-500 to-orange-500',
+          badge: 'bg-amber-50 text-amber-700 border-amber-200',
+          dot: 'bg-amber-500'
+        };
+      case 'exhaust':
+        return {
+          bar: 'bg-gradient-to-r from-violet-500 to-purple-600',
+          badge: 'bg-violet-50 text-violet-700 border-violet-200',
+          dot: 'bg-violet-500'
+        };
+      case 'ecu_status':
+      default:
+        return {
+          bar: 'bg-gradient-to-r from-cyan-500 to-blue-600',
+          badge: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+          dot: 'bg-cyan-500'
+        };
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col max-w-md mx-auto w-full px-4 py-3 min-h-[calc(100vh-130px)] pb-24">
@@ -268,35 +310,26 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
             </div>
           ) : (
             <div className="space-y-3">
-              {/* Controls bar: 3 View Modes + Record */}
+              {/* Controls bar: 2 View Modes (Đồng hồ / Danh sách) + Record */}
               <div className="flex items-center justify-between gap-1.5">
                 <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200/70">
                   <button
-                    onClick={() => setViewMode('list')}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
-                      viewMode === 'list' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-500'
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>37 PIDs</span>
-                  </button>
-                  <button
                     onClick={() => setViewMode('gauges')}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
-                      viewMode === 'gauges' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-500'
+                    className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition flex items-center gap-1.5 ${
+                      viewMode === 'gauges' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-500 hover:text-slate-700'
                     }`}
                   >
                     <Gauge className="w-3.5 h-3.5" />
-                    <span>Đồng hồ</span>
+                    <span>Đồng hồ đo</span>
                   </button>
                   <button
-                    onClick={() => setViewMode('charts')}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
-                      viewMode === 'charts' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-500'
+                    onClick={() => setViewMode('list')}
+                    className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition flex items-center gap-1.5 ${
+                      viewMode === 'list' ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-500 hover:text-slate-700'
                     }`}
                   >
-                    <LineChart className="w-3.5 h-3.5" />
-                    <span>Đồ thị</span>
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Danh sách (37)</span>
                   </button>
                 </div>
 
@@ -312,7 +345,7 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
                   {isRecording ? (
                     <>
                       <Square className="w-3 h-3 fill-current" />
-                      <span>Dừng ghi ({history.length})</span>
+                      <span>Dừng ({history.length})</span>
                     </>
                   ) : (
                     <>
@@ -323,8 +356,154 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
                 </button>
               </div>
 
+              {/* Horizontal Category Filter Pills (dùng chung cho cả Đồng hồ & Danh sách) */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 pt-0.5">
+                {LIVE_CATEGORIES.map(cat => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition border ${
+                      selectedCategory === cat.id
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {cat.nameVi} ({cat.count})
+                  </button>
+                ))}
+              </div>
+
               {/* ======================================================== */}
-              {/* CHẾ ĐỘ 1: DANH SÁCH TOÀN BỘ 37 THÔNG SỐ (XPANDER 37 PIDs) */}
+              {/* CHẾ ĐỘ 1: ĐỒNG HỒ HIỂN THỊ TOÀN BỘ 37 THÔNG SỐ (GAUGES)   */}
+              {/* ======================================================== */}
+              {viewMode === 'gauges' && (
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  {/* 2 Đồng hồ kim tròn trung tâm: Vòng tua máy RPM & Tốc độ Speed */}
+                  {(selectedCategory === 'all' || selectedCategory === 'engine') && (
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <GaugeMeter
+                        value={sensor.rpm}
+                        min={0}
+                        max={7000}
+                        label="Vòng tua (4A91)"
+                        unit="RPM"
+                        color="#2563eb"
+                        warningThreshold={4500}
+                        dangerThreshold={6000}
+                        size={155}
+                      />
+                      <GaugeMeter
+                        value={sensor.speed}
+                        min={0}
+                        max={220}
+                        label="Tốc độ xe"
+                        unit="km/h"
+                        color="#0d9488"
+                        warningThreshold={120}
+                        dangerThreshold={160}
+                        size={155}
+                      />
+                    </div>
+                  )}
+
+                  {/* DANH SÁCH TẤT CẢ CÁC ĐỒNG HỒ ĐO LIVE DATA (Mỗi thông số là 1 đồng hồ đo thanh/thước) */}
+                  <div className="space-y-2.5 max-h-[calc(100vh-340px)] overflow-y-auto pr-0.5">
+                    {filteredPids.map((item) => {
+                      const val = item.getValue(sensor);
+                      const min = item.min ?? 0;
+                      const max = item.max ?? 100;
+                      const { percent, isNumeric } = getGaugeProgress(val, min, max);
+                      const colors = getCategoryColor(item.category);
+                      const isExpanded = expandedPid === item.pid;
+
+                      return (
+                        <div
+                          key={item.pid}
+                          className="bg-white rounded-2xl p-3 border border-slate-200/90 shadow-2xs hover:border-blue-300 transition-all"
+                        >
+                          {/* Dòng 1: Mã PID, Tên thông số và Giá trị số lớn */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono text-[10px] font-extrabold px-1.5 py-0.2 rounded bg-slate-100 text-blue-900 border border-slate-200">
+                                  0x{item.pid}
+                                </span>
+                                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${colors.badge}`}>
+                                  {item.shortName}
+                                </span>
+                              </div>
+                              <h4 className="text-xs font-bold text-slate-800 mt-1 truncate">
+                                {item.nameVi}
+                              </h4>
+                            </div>
+
+                            {/* Đồng hồ số hiển thị giá trị */}
+                            <div className="text-right shrink-0">
+                              <div className="font-mono text-base font-black text-slate-950 flex items-baseline justify-end gap-1">
+                                <span>{val}</span>
+                                {item.unit && (
+                                  <span className="text-[10px] font-bold text-slate-500 font-sans">
+                                    {item.unit}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[9px] font-medium text-slate-400 block">
+                                Chuẩn: {item.stdRange.split('(')[0]}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Dòng 2: Thanh đồng hồ đo mức (Meter Level Gauge Bar) */}
+                          {isNumeric ? (
+                            <div className="mt-2.5 space-y-1">
+                              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200/60">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-300 ${colors.bar}`}
+                                  style={{ width: `${percent}%` }}
+                                />
+                              </div>
+                              <div className="flex justify-between items-center text-[9px] font-mono text-slate-400 px-0.5">
+                                <span>{min} {item.unit}</span>
+                                <span className="font-bold text-slate-600">{percent}%</span>
+                                <span>{max} {item.unit}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">Trạng thái hệ thống:</span>
+                              <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                Hoạt động chuẩn ({val})
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Chi tiết vị trí cảm biến trên xe Xpander */}
+                          <div className="mt-2 pt-1.5 border-t border-slate-100/80 flex items-center justify-between text-[10px]">
+                            <button
+                              onClick={() => setExpandedPid(isExpanded ? null : item.pid)}
+                              className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1 ml-auto"
+                            >
+                              <span>{isExpanded ? 'Ẩn vị trí' : 'Xem vị trí trên xe'}</span>
+                              {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                            </button>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="mt-1.5 p-2 bg-slate-50 rounded-xl text-[10px] text-slate-600 border border-slate-150 animate-in fade-in duration-150">
+                              <div className="font-semibold text-slate-700 mb-0.5">Vị trí lắp đặt trên Xpander:</div>
+                              <div className="leading-relaxed">{item.locationVi}</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ======================================================== */}
+              {/* CHẾ ĐỘ 2: DANH SÁCH 37 THÔNG SỐ (XPANDER 37 PIDs LIST)   */}
               {/* ======================================================== */}
               {viewMode === 'list' && (
                 <div className="space-y-2.5 animate-in fade-in duration-200">
@@ -346,23 +525,6 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
                         ✕
                       </button>
                     )}
-                  </div>
-
-                  {/* Horizontal Category Filter Pills */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                    {LIVE_CATEGORIES.map(cat => (
-                      <button
-                        key={cat.id}
-                        onClick={() => setSelectedCategory(cat.id)}
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition border ${
-                          selectedCategory === cat.id
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                        }`}
-                      >
-                        {cat.nameVi} ({cat.count})
-                      </button>
-                    ))}
                   </div>
 
                   {/* List of 37 PIDs Cards */}
@@ -437,142 +599,6 @@ export const LiveDataScreen: React.FC<LiveDataScreenProps> = ({
                       })
                     )}
                   </div>
-                </div>
-              )}
-
-              {/* ======================================================== */}
-              {/* CHẾ ĐỘ 2: ĐỒNG HỒ KIM TRỰC QUAN (GAUGES VIEW)            */}
-              {/* ======================================================== */}
-              {viewMode === 'gauges' && (
-                <div className="space-y-3 animate-in fade-in duration-200">
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <GaugeMeter
-                      value={sensor.rpm}
-                      min={0}
-                      max={7000}
-                      label="Vòng tua máy (4A91)"
-                      unit="RPM"
-                      color="#2563eb"
-                      warningThreshold={4500}
-                      dangerThreshold={6000}
-                      size={155}
-                    />
-                    <GaugeMeter
-                      value={sensor.speed}
-                      min={0}
-                      max={220}
-                      label="Tốc độ xe Xpander"
-                      unit="km/h"
-                      color="#0d9488"
-                      warningThreshold={120}
-                      dangerThreshold={160}
-                      size={155}
-                    />
-                  </div>
-
-                  {/* 6 Quick Dashboard Cards */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="bg-white p-2.5 rounded-2xl border border-slate-100 shadow-2xs text-center">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Nước làm mát
-                      </span>
-                      <span className="text-base font-black text-slate-800 font-mono mt-0.5 block">
-                        {sensor.coolantTemp}°C
-                      </span>
-                      <span className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1 py-0.2 rounded-full inline-block mt-0.5">
-                        Chuẩn (80-95)
-                      </span>
-                    </div>
-
-                    <div className="bg-white p-2.5 rounded-2xl border border-slate-100 shadow-2xs text-center">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Bướm ga TPS
-                      </span>
-                      <span className="text-base font-black text-slate-800 font-mono mt-0.5 block">
-                        {sensor.throttle}%
-                      </span>
-                      <span className="text-[8px] font-bold text-blue-600 bg-blue-50 px-1 py-0.2 rounded-full inline-block mt-0.5">
-                        Kênh 1
-                      </span>
-                    </div>
-
-                    <div className="bg-white p-2.5 rounded-2xl border border-slate-100 shadow-2xs text-center">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Tải động cơ
-                      </span>
-                      <span className="text-base font-black text-slate-800 font-mono mt-0.5 block">
-                        {sensor.engineLoad}%
-                      </span>
-                      <span className="text-[8px] font-bold text-amber-600 bg-amber-50 px-1 py-0.2 rounded-full inline-block mt-0.5">
-                        Calculated
-                      </span>
-                    </div>
-
-                    <div className="bg-white p-2.5 rounded-2xl border border-slate-100 shadow-2xs text-center">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Áp suất nạp MAP
-                      </span>
-                      <span className="text-base font-black text-slate-800 font-mono mt-0.5 block">
-                        {sensor.mapKpa ?? 43} kPa
-                      </span>
-                      <span className="text-[8px] font-bold text-indigo-600 bg-indigo-50 px-1 py-0.2 rounded-full inline-block mt-0.5">
-                        Hút khí tự nhiên
-                      </span>
-                    </div>
-
-                    <div className="bg-white p-2.5 rounded-2xl border border-slate-100 shadow-2xs text-center">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Góc đánh lửa
-                      </span>
-                      <span className="text-base font-black text-slate-800 font-mono mt-0.5 block">
-                        {sensor.timingAdvance ?? 11}°
-                      </span>
-                      <span className="text-[8px] text-slate-400 block mt-0.5">
-                        BTDC #1
-                      </span>
-                    </div>
-
-                    <div className="bg-white p-2.5 rounded-2xl border border-slate-100 shadow-2xs text-center">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Điện áp ECU
-                      </span>
-                      <span className="text-base font-black text-slate-800 font-mono mt-0.5 block">
-                        {typeof sensor.voltage === 'number' ? sensor.voltage.toFixed(2) : sensor.voltage}V
-                      </span>
-                      <span className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1 py-0.2 rounded-full inline-block mt-0.5">
-                        Máy phát tốt
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ======================================================== */}
-              {/* CHẾ ĐỘ 3: ĐỒ THỊ SÓNG THỜI GIAN THỰC (CHARTS VIEW)       */}
-              {/* ======================================================== */}
-              {viewMode === 'charts' && (
-                <div className="space-y-3 animate-in fade-in duration-200">
-                  <LiveChart
-                    data={history}
-                    metric="rpm"
-                    label="Vòng tua động cơ Mitsubishi Xpander (RPM)"
-                    unit="RPM"
-                    color="#2563eb"
-                  />
-                  <LiveChart
-                    data={history}
-                    metric="speed"
-                    label="Tốc độ xe Xpander (km/h)"
-                    unit="km/h"
-                    color="#0d9488"
-                  />
-                  <LiveChart
-                    data={history}
-                    metric="coolantTemp"
-                    label="Nhiệt độ nước làm mát động cơ (°C)"
-                    unit="°C"
-                    color="#f59e0b"
-                  />
                 </div>
               )}
             </div>
